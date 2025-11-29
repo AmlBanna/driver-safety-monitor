@@ -1,7 +1,12 @@
+# requirements.txt - FIXED for NumPy compatibility issue
+
+# ⚠️ CRITICAL: numpy MUST come FIRST and be version 1.x
+numpy<2.0.0,>=1.24.0
+
+# Now install everything else
 streamlit>=1.28.0
 opencv-python-headless==4.8.1.78
 torch>=2.0.0
 torchvision>=0.15.0
 pillow>=10.0.0
-numpy>=1.24.0
 gdown>=4.7.1
