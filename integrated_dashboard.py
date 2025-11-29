@@ -1,4 +1,4 @@
-# integrated_dashboard.py - FINAL FIXED: Python 3.10, No TF, OpenCV Drowsiness + Torch Distraction
+# integrated_dashboard.py - FINAL FIXED: No packages.txt, Compatible Requirements
 
 import streamlit as st
 import cv2
@@ -44,8 +44,11 @@ def load_distraction_model():
     model = EfficientNet_B0().to(device)
     state = torch.load(effnet_path, map_location=device)
     state_dict = state["model"] if "model" in state else state
-    # Fix keys if needed
-    fixed_state = {k.replace("net.", ""): v for k, v in state_dict.items()}
+    # Fix common key mismatches
+    fixed_state = {}
+    for k, v in state_dict.items():
+        new_k = k.replace("net.", "").replace("module.", "")
+        fixed_state[new_k] = v
     model.load_state_dict(fixed_state)
     model.eval()
     st.success("Distraction model loaded!")
@@ -79,7 +82,7 @@ def detect_distraction(frame, model, device):
     cv2.putText(frame, f"{label} ({conf:.1%})", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
     return frame, idx != 0, label
 
-# ====================== DROWSINESS (OpenCV EAR - High Accuracy) ======================
+# ====================== DROWSINESS (OpenCV - Simple & Fast) ======================
 def detect_drowsiness(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -94,11 +97,11 @@ def detect_drowsiness(frame):
         eyes_detected += len(eyes)
         for (ex, ey, ew, eh) in eyes:
             cv2.rectangle(frame, (x+ex, y+ey), (x+ex+ew, y+ey+eh), (255, 0, 0), 2)
-            # Approximate EAR using eye region variance (simple & fast)
+            # Simple closed eye detection using variance (low = closed)
             eye_region = roi_gray[ey:ey+eh, ex:ex+ew]
             if eye_region.size > 0:
                 variance = np.var(eye_region)
-                if variance < 50:  # Low variance = closed eyes
+                if variance < 50:  # Threshold for closed eyes
                     closed += 1
                     cv2.putText(frame, "CLOSED", (x+ex, y+ey-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                 else:
@@ -107,7 +110,7 @@ def detect_drowsiness(frame):
     return frame, is_drowsy
 
 # ====================== UI DASHBOARD ======================
-st.title("Driver Safety Monitor - Live Demo")
+st.title("Driver Safety Monitor - Live & Safe!")
 col1, col2, col3 = st.columns([1, 1, 1])
 
 front_placeholder = col1.empty()
@@ -188,8 +191,9 @@ while run:
                 st.error(a)
         else:
             st.success("All Clear - Safe Driving!")
-        st.metric("Drowsy Frames", drowsy_counter, delta=1 if drowsy_counter > 0 else 0)
-        st.metric("Distract Frames", distract_counter, delta=1 if distract_counter > 0 else 0)
+        col_a, col_b = st.columns(2)
+        col_a.metric("Drowsy Frames", drowsy_counter)
+        col_b.metric("Distract Frames", distract_counter)
 
     time.sleep(0.033)
 
