@@ -1,10 +1,7 @@
 # integrated_dashboard.py
-# FULLY INTEGRATED DRIVER SAFETY SYSTEM
-# Front Cam: Drowsiness (MRL) | Side Cam: Distraction (StateFarm) | Live Dashboard
-
+import streamlit as st
 import cv2
 import numpy as np
-import streamlit as st
 from PIL import Image
 import torch
 from torchvision import transforms
@@ -13,240 +10,166 @@ from tensorflow.keras.models import load_model
 import time
 import json
 from datetime import datetime
-from collections import deque
 import threading
 import queue
+import urllib.request
 import os
 
-# ====================== CONFIG ======================
-st.set_page_config(page_title="Driver Safety Monitor", layout="wide")
-st.title("Real-Time Driver Safety Monitoring System")
-st.markdown("**Front Cam: Drowsiness | Side Cam: Distraction | Live Dashboard**")
+# ====================== DOWNLOAD MODELS ======================
+@st.cache_resource
+def download_model(url, filename):
+    if not os.path.exists(filename):
+        with st.spinner(f"Downloading {filename}..."):
+            urllib.request.urlretrieve(url, filename)
+        st.success(f"{filename} downloaded!")
+    return filename
 
-# Model Paths (Update if needed)
-DROWSINESS_MODEL_PATH = "improved_cnn_best.keras"
-DISTRACTION_MODELS = {
-    "EfficientNet": "model_EfficientNet_B0_bs_16_best_model",
-    "DenseNet": "model_Dense_bs_16_best_model",
-    "MobileNet": "model_MobileNet_V3_bs_16_best_model"
-}
-CLASS_INDICES_PATH = "class_indices.json"
+# --- GOOGLE DRIVE DIRECT LINKS ---
+DROWSINESS_URL = "https://drive.google.com/uc?export=download&id=1WxCzOlSZLWjUscZPVFatblPzfM_WNh5h"
+EFFNET_URL     = "https://drive.google.com/uc?export=download&id=1GvL1w3UmOeMRISBWdKGGeeKNR2oH0MZM"
+DENSENET_URL   = "https://drive.google.com/uc?export=download&id=1-1eJ-5-6_GtjNghuGQLlrO2psp18l-z4"
+MOBILENET_URL  = "https://drive.google.com/uc?export=download&id=1m-6tjfX46a82wxmrMTclBXrVAf_XmJlj"
 
-# Distraction Labels
-DISTRACTION_LABELS = {
-    "c0": "Safe Driving", "c1": "Texting (Right)", "c2": "Talking on Phone (Right)",
-    "c3": "Texting (Left)", "c4": "Talking on Phone (Left)", "c5": "Adjusting Radio",
-    "c6": "Drinking", "c7": "Reaching Behind", "c8": "Hair/Makeup", "c9": "Talking to Passenger"
-}
+drowsiness_path = download_model(DROWSINESS_URL, "improved_cnn_best.keras")
+effnet_path = download_model(EFFNET_URL, "model_EfficientNet_B0_bs_16_best_model")
+densenet_path = download_model(DENSENET_URL, "model_Dense_bs_16_best_model")
+mobilenet_path = download_model(MOBILENET_URL, "model_MobileNet_V3_bs_16_best_model")
 
-RISK_LEVELS = {
-    "c0": "SAFE", "c1": "CRITICAL", "c2": "HIGH", "c3": "CRITICAL", "c4": "HIGH",
-    "c5": "MEDIUM", "c6": "MEDIUM", "c7": "HIGH", "c8": "MEDIUM", "c9": "LOW"
-}
+# ====================== LOAD MODELS ======================
+@st.cache_resource
+def load_models():
+    st.info("Loading models...")
+    
+    drowsiness_model = load_model(drowsiness_path)
+    
+    device = torch.device("cpu")
+    from torchvision import models
+    import torch.nn as nn
 
-# Transform for PyTorch models
+    class EfficientNet_B0(nn.Module):
+        def __init__(self): super().__init__(); self.net = models.efficientnet_b0(pretrained=False); self.net.classifier = nn.Linear(1280, 10)
+        def forward(self, x): return self.net(x)
+    
+    class DenseNet(nn.Module):
+        def __init__(self): super().__init__(); self.net = models.densenet121(pretrained=False); self.net.classifier = nn.Linear(1024, 10)
+        def forward(self, x): return self.net(x)
+    
+    class MobileNet_V3(nn.Module):
+        def __init__(self): super().__init__(); self.net = models.mobilenet_v3_small(pretrained=False); self.net.classifier[3] = nn.Linear(1024, 10)
+        def forward(self, x): return self.net(x)
+
+    effnet = EfficientNet_B0().to(device)
+    densenet = DenseNet().to(device)
+    mobilenet = MobileNet_V3().to(device)
+
+    for path, model in zip([effnet_path, densenet_path, mobilenet_path], [effnet, densenet, mobilenet]):
+        state = torch.load(path, map_location=device)
+        state_dict = state["model"] if "model" in state else state
+        model.load_state_dict(state_dict)
+        model.eval()
+
+    st.success("All models loaded!")
+    return drowsiness_model, {"EfficientNet": effnet, "DenseNet": densenet, "MobileNet": mobilenet}, device
+
+drowsiness_model, distraction_models, device = load_models()
+
+# ====================== DETECTION ======================
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-# ====================== MODEL LOADER ======================
-@st.cache_resource
-def load_models():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    st.info(f"Loading models on {device}...")
+LABELS = {f"c{i}": name for i, name in enumerate([
+    "Safe Driving", "Texting (Right)", "Talking on Phone (Right)",
+    "Texting (Left)", "Talking on Phone (Left)", "Adjusting Radio",
+    "Drinking", "Reaching Behind", "Hair/Makeup", "Talking to Passenger"
+])}
 
-    # Load Drowsiness Model (TensorFlow)
-    drowsiness_model = load_model(DROWSINESS_MODEL_PATH)
-
-    # Load Distraction Models (PyTorch)
-    from model_builder import EfficientNet_B0, DenseNet, MobileNet_V3
-    models = {}
-    for name, path in DISTRACTION_MODELS.items():
-        if name == "EfficientNet":
-            model = EfficientNet_B0().to(device)
-        elif name == "DenseNet":
-            model = DenseNet().to(device)
-        else:
-            model = MobileNet_V3().to(device)
-        
-        state = torch.load(path, map_location=device)
-        state_dict = state["model"] if "model" in state else state
-        state_dict = {k.replace("net.", ""): v for k, v in state_dict.items()}
-        model.load_state_dict(state_dict)
-        model.eval()
-        models[name] = model
-
-    # Load class indices
-    with open(CLASS_INDICES_PATH, 'r') as f:
-        class_indices = json.load(f)
-    idx_to_class = {int(v): k for k, v in class_indices.items()}
-
-    st.success("All models loaded!")
-    return drowsiness_model, models, device, idx_to_class
-
-drowsiness_model, distraction_models, device, idx_to_class = load_models()
-
-# Face & Eye Cascades
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
 
-# ====================== DETECTION FUNCTIONS ======================
 def detect_drowsiness(frame, model):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(gray, 1.1, 3, minSize=(100, 100))
-    if len(faces) == 0:
-        return frame, False, 0.0, False
-
-    eyes_closed = 0
-    eyes_detected = 0
+    faces = face_cascade.detectMultiScale(gray, 1.1, 3, minSize=(80, 80))
+    closed = 0
     for (x, y, w, h) in faces:
         roi = gray[y:y+int(h*0.7), x:x+w]
-        eyes = eye_cascade.detectMultiScale(roi, 1.05, 3, minSize=(20, 20))
+        eyes = eye_cascade.detectMultiScale(roi, 1.05, 3)
         for (ex, ey, ew, eh) in eyes:
-            eyes_detected += 1
-            eye = roi[ey:ey+eh, ex:ex+ew]
-            eye = cv2.resize(eye, (128, 128)) / 255.0
-            eye = np.expand_dims(eye, axis=(0, -1))
+            eye = cv2.resize(roi[ey:ey+eh, ex:ex+ew], (128, 128)) / 255.0
+            eye = np.expand_dims(eye, (0, -1))
             pred = model.predict(eye, verbose=0)[0][0]
-            is_open = pred > 0.5
-            label = "OPEN" if is_open else "CLOSED"
-            color = (0, 255, 0) if is_open else (0, 0, 255)
+            label = "CLOSED" if pred < 0.5 else "OPEN"
+            color = (0, 0, 255) if pred < 0.5 else (0, 255, 0)
             cv2.rectangle(frame, (x+ex, y+ey), (x+ex+ew, y+ey+eh), color, 2)
-            cv2.putText(frame, f"{label} {pred:.2f}", (x+ex, y+ey-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-            if not is_open:
-                eyes_closed += 1
+            if pred < 0.5: closed += 1
+    return frame, closed >= 2
 
-    return frame, eyes_detected > 0, eyes_closed >= 2, eyes_detected > 0
-
-def detect_distraction(frame, models, device, idx_to_class):
-    pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    input_tensor = transform(pil_img).unsqueeze(0).to(device)
-    
+def detect_distraction(frame, models, device):
+    pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    tensor = transform(pil).unsqueeze(0).to(device)
     with torch.no_grad():
-        outputs = [m(input_tensor) for m in models.values()]
-        avg_output = torch.mean(torch.stack(outputs), dim=0)
-        probs = torch.softmax(avg_output, dim=1)[0]
-        pred_idx = torch.argmax(probs).item()
-        confidence = probs[pred_idx].item()
-    
-    class_code = idx_to_class.get(pred_idx, f"c{pred_idx}")
-    label = DISTRACTION_LABELS.get(class_code, "Unknown")
-    risk = RISK_LEVELS.get(class_code, "UNKNOWN")
-    
-    color = (0, 255, 0) if class_code == "c0" else (0, 0, 255)
-    cv2.putText(frame, f"{label}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-    cv2.putText(frame, f"Risk: {risk} ({confidence:.1%})", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-    
-    return frame, class_code, label, confidence, risk
+        outputs = [m(tensor) for m in models.values()]
+        probs = torch.softmax(torch.mean(torch.stack(outputs), 0), 1)[0]
+        idx = torch.argmax(probs).item()
+    label = LABELS[f"c{idx}"]
+    conf = probs[idx].item()
+    color = (0, 255, 0) if idx == 0 else (0, 0, 255)
+    cv2.putText(frame, f"{label} ({conf:.1%})", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+    return frame, idx == 0
 
-# ====================== STREAMLIT DASHBOARD ======================
-col1, col2, col3 = st.columns([1, 1, 1])
+# ====================== UI ======================
+st.title("Driver Safety Monitor")
+col1, col2, col3 = st.columns(3)
+front_ph = col1.empty(); side_ph = col2.empty(); dash_ph = col3.empty()
 
-front_placeholder = col1.empty()
-side_placeholder = col2.empty()
-dashboard_placeholder = col3.empty()
+run = st.checkbox("Start Monitoring", True)
+alerts = []
 
-# Queues for thread-safe frame passing
-front_queue = queue.Queue(maxsize=1)
-side_queue = queue.Queue(maxsize=1)
+front_q = queue.Queue(1); side_q = queue.Queue(1)
 
-# State
-alerts = deque(maxlen=10)
-drowsy_counter = 0
-distraction_counter = 0
-DROWSY_THRESH = 5
-DISTRACT_THRESH = 3
-
-def front_cam_thread():
-    cap = cv2.VideoCapture(0)
-    while True:
-        ret, frame = cap.read()
-        if not ret: break
-        frame = cv2.resize(frame, (480, 360))
-        try:
-            front_queue.put_nowait(frame)
-        except:
-            pass
+def cam_thread(q, idx):
+    cap = cv2.VideoCapture(idx)
+    while run:
+        ret, f = cap.read()
+        if ret:
+            f = cv2.resize(f, (400, 300))
+            try: q.put_nowait(f)
+            except: pass
         time.sleep(0.03)
     cap.release()
 
-def side_cam_thread():
-    cap = cv2.VideoCapture(1)  # Change to 2 if needed
-    while True:
-        ret, frame = cap.read()
-        if not ret: break
-        frame = cv2.resize(frame, (480, 360))
-        try:
-            side_queue.put_nowait(frame)
-        except:
-            pass
-        time.sleep(0.03)
-    cap.release()
+if run:
+    threading.Thread(target=cam_thread, args=(front_q, 0), daemon=True).start()
+    threading.Thread(target=cam_thread, args=(side_q, 1), daemon=True).start()
 
-# Start threads
-threading.Thread(target=front_cam_thread, daemon=True).start()
-threading.Thread(target=side_cam_thread, daemon=True).start()
-
-st.sidebar.header("Controls")
-run = st.sidebar.checkbox("Start Live Monitoring", value=True)
-show_demo = st.sidebar.checkbox("Use Demo Mode (No Camera)", value=False)
-
-if show_demo:
-    st.warning("Demo Mode: Using sample frames")
-
-# Main Loop
-frame_count = 0
-start_time = time.time()
-
+drowsy_count = 0; distract_count = 0
 while run:
-    frame_count += 1
-    current_time = datetime.now().strftime("%H:%M:%S")
+    front = front_q.get() if not front_q.empty() else None
+    side = side_q.get() if not side_q.empty() else None
 
-    # Get frames
-    front_frame = front_queue.get() if not front_queue.empty() else None
-    side_frame = side_queue.get() if not side_queue.empty() else None
+    if front is not None:
+        front, is_drowsy = detect_drowsiness(front.copy(), drowsiness_model)
+        if is_drowsy: drowsy_count += 1
+        else: drowsy_count = 0
+        if drowsy_count >= 5:
+            alerts.append(f"[{datetime.now().strftime('%H:%M:%S')}] DROWSY ALERT!")
+            drowsy_count = 0
+        front_ph.image(front, channels="BGR", caption="Front Cam (Drowsiness)")
 
-    if show_demo:
-        front_frame = np.random.randint(0, 255, (360, 480, 3), dtype=np.uint8)
-        side_frame = np.random.randint(0, 255, (360, 480, 3), dtype=np.uint8)
+    if side is not None:
+        side, is_safe = detect_distraction(side.copy(), distraction_models, device)
+        if not is_safe: distract_count += 1
+        else: distract_count = 0
+        if distract_count >= 3:
+            alerts.append(f"[{datetime.now().strftime('%H:%M:%S')}] DISTRACTION ALERT!")
+            distract_count = 0
+        side_ph.image(side, channels="BGR", caption="Side Cam (Distraction)")
 
-    if front_frame is not None:
-        front_frame, eyes_detected, is_drowsy, _ = detect_drowsiness(front_frame.copy(), drowsiness_model)
-        if is_drowsy:
-            drowsy_counter += 1
-            if drowsy_counter >= DROWSY_THRESH:
-                alerts.appendleft(f"[{current_time}] DROWSINESS ALERT!")
-        elif eyes_detected:
-            drowsy_counter = 0
-        front_placeholder.image(front_frame, channels="BGR", caption="Front Camera (Drowsiness)")
-
-    if side_frame is not None:
-        side_frame, class_code, label, conf, risk = detect_distraction(side_frame.copy(), distraction_models, device, idx_to_class)
-        if class_code != "c0":
-            distraction_counter += 1
-            if distraction_counter >= DISTRACT_THRESH and risk in ["CRITICAL", "HIGH"]:
-                alerts.appendleft(f"[{current_time}] DISTRACTION: {label}")
-        else:
-            distraction_counter = 0
-        side_placeholder.image(side_frame, channels="BGR", caption="Side Camera (Distraction)")
-
-    # Dashboard
-    with dashboard_placeholder.container():
-        st.subheader("Live Alerts")
-        if alerts:
-            for alert in alerts:
-                st.error(alert)
-        else:
-            st.success("All Clear")
-
-        st.write(f"**Drowsy Frames**: {drowsy_counter}/{DROWSY_THRESH}")
-        st.write(f"**Distraction Frames**: {distraction_counter}/{DISTRACT_THRESH}")
-        st.write(f"**FPS**: {frame_count / (time.time() - start_time):.1f}")
+    with dash_ph.container():
+        st.subheader("Alerts")
+        for a in alerts[-5:]: st.error(a)
+        st.write(f"Drowsy: {drowsy_count}/5 | Distracted: {distract_count}/3")
 
     time.sleep(0.03)
-    if not st.session_state.get("run", True):
-        break
-
-st.success("Monitoring Stopped")
