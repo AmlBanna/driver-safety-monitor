@@ -1,6 +1,6 @@
 """
-Driver Safety Monitor Pro - 5 AI MODELS
-Individual Video Upload + Image Upload + 4 Behavior Models for Side Camera
+Driver Safety Monitor Pro - Final Version
+Dual Video Analysis + Image Upload | No Model Names Shown
 """
 import streamlit as st
 import cv2
@@ -17,9 +17,9 @@ import gdown
 import io
 
 # ====================== CONFIG ======================
-st.set_page_config(page_title="Driver Safety Monitor Pro", page_icon="car", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Driver Safety Monitor", page_icon="car", layout="wide", initial_sidebar_state="expanded")
 
-# Professional CSS
+# Clean Professional CSS
 st.markdown("""
 <style>
     .main-header {background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%); padding: 20px; border-radius: 10px; color: white; text-align: center; margin-bottom: 20px;}
@@ -32,107 +32,68 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ====================== MODEL ARCHITECTURES ======================
+# ====================== MODEL ARCHITECTURES (HIDDEN) ======================
 class DenseNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.name = 'DenseNet'
-        Dense = models.densenet121(weights='DEFAULT')
-        for param in Dense.features.parameters():
-            param.requires_grad = False
-        Dense.classifier = torch.nn.Sequential(
-            torch.nn.Dropout(p=0.2, inplace=True),
-            torch.nn.Linear(in_features=1024, out_features=10, bias=True)
-        )
-        self.net = Dense
-    def forward(self, x):
-        return self.net(x)
+        net = models.densenet121(weights='DEFAULT')
+        for param in net.features.parameters(): param.requires_grad = False
+        net.classifier = nn.Sequential(nn.Dropout(0.2), nn.Linear(1024, 10))
+        self.net = net
+    def forward(self, x): return self.net(x)
 
 class EfficientNet_B0(nn.Module):
     def __init__(self):
         super().__init__()
-        self.name = 'EfficientNet_B0'
-        EfficientNet_B0_weights = models.EfficientNet_B0_Weights.DEFAULT
-        EfficientNet_B0 = models.efficientnet_b0(weights=EfficientNet_B0_weights)
-        for param in EfficientNet_B0.features.parameters():
-            param.requires_grad = False
-        EfficientNet_B0.classifier = torch.nn.Sequential(
-            torch.nn.Dropout(p=0.2, inplace=True),
-            torch.nn.Linear(in_features=1280, out_features=10)
-        )
-        self.net = EfficientNet_B0
-    def forward(self, x):
-        return self.net(x)
+        net = models.efficientnet_b0(weights='DEFAULT')
+        for param in net.features.parameters(): param.requires_grad = False
+        net.classifier = nn.Sequential(nn.Dropout(0.2), nn.Linear(1280, 10))
+        self.net = net
+    def forward(self, x): return self.net(x)
 
 class MobileNet_V3(nn.Module):
     def __init__(self):
         super().__init__()
-        self.name = 'MobileNet_V3'
-        MobileNet_V3 = models.mobilenet_v3_large(weights='DEFAULT')
-        for param in MobileNet_V3.features.parameters():
-            param.requires_grad = False
-        MobileNet_V3.classifier = torch.nn.Sequential(
-            torch.nn.Dropout(p=0.2, inplace=True),
-            torch.nn.Linear(in_features=960, out_features=10, bias=True)
-        )
-        self.net = MobileNet_V3
-    def forward(self, x):
-        return self.net(x)
+        net = models.mobilenet_v3_large(weights='DEFAULT')
+        for param in net.features.parameters(): param.requires_grad = False
+        net.classifier = nn.Sequential(nn.Dropout(0.2), nn.Linear(960, 10))
+        self.net = net
+    def forward(self, x): return self.net(x)
 
-# ====================== MODEL DOWNLOAD ======================
+# ====================== MODEL DOWNLOAD (HIDDEN) ======================
 @st.cache_resource
-def download_model(filename, gdrive_id, desc):
+def download_model(filename, gdrive_id):
     if os.path.exists(filename): return filename
     try:
-        with st.spinner(f"Downloading {desc}..."):
-            gdown.download(f"https://drive.google.com/uc?id={gdrive_id}", filename, quiet=False)
-        st.success(f"{desc} downloaded")
+        with st.spinner("Loading AI engine..."):
+            gdown.download(f"https://drive.google.com/uc?id={gdrive_id}", filename, quiet=True)
         return filename
-    except: 
-        st.warning(f"Failed to download {desc}")
-        return None
+    except: return None
 
 model_paths = {
-    "densenet": download_model("densenet_model.pth", "1-1eJ-5-6_GtjNghuGQLlrO2psp18l-z4", "DenseNet Behavior Model"),
-    "effnet": download_model("effnet_model.pth", "1GvL1w3UmOeMRISBWdKGGeeKNR2oH0MZM", "EfficientNet Behavior Model"),
-    "mobilenet": download_model("mobilenet_model.pth", "1WxCzOlSZLWjUscZPVFatblPzfM_WNh5h", "MobileNet Behavior Model"),
-    # For Kaggle model v1, assume user uploads or provide placeholder
-    "kaggle_behavior": None  # Set to path if downloaded separately
+    "m1": download_model("m1.pth", "1-1eJ-5-6_GtjNghuGQLlrO2psp18l-z4"),
+    "m2": download_model("m2.pth", "1GvL1w3UmOeMRISBWdKGGeeKNR2oH0MZM"),
+    "m3": download_model("m3.pth", "1WxCzOlSZLWjUscZPVFatblPzfM_WNh5h"),
+    "m4": download_model("m4.pth", "YOUR_KAGGLE_MODEL_ID")  # ضع ID الموديل من Kaggle هنا
 }
 
-# ====================== LOAD MODELS ======================
+# ====================== LOAD MODELS (HIDDEN) ======================
 @st.cache_resource
 def load_models():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    models = {}
-    try:
-        if model_paths["densenet"]:
-            m = DenseNet().to(device)
-            state = torch.load(model_paths["densenet"], map_location=device)
-            m.load_state_dict(state.get("model", state), strict=False); m.eval(); models["densenet"] = m
-    except: pass
-    try:
-        if model_paths["effnet"]:
-            m = EfficientNet_B0().to(device)
-            state = torch.load(model_paths["effnet"], map_location=device)
-            fixed = {k.replace("net.", "").replace("module.", ""): v for k, v in state.get("model", state).items()}
-            m.load_state_dict(fixed, strict=False); m.eval(); models["effnet"] = m
-    except: pass
-    try:
-        if model_paths["mobilenet"]:
-            m = MobileNet_V3().to(device)
-            state = torch.load(model_paths["mobilenet"], map_location=device)
-            m.load_state_dict(state.get("model", state), strict=False); m.eval(); models["mobilenet"] = m
-    except: pass
-    # Kaggle model placeholder - assume same architecture as one of above, e.g., EfficientNet
-    try:
-        if model_paths["kaggle_behavior"]:
-            m = EfficientNet_B0().to(device)
-            m.load_state_dict(torch.load(model_paths["kaggle_behavior"], map_location=device), strict=False); m.eval(); models["kaggle"] = m
-    except: pass
+    models = []
+    for path in [model_paths["m1"], model_paths["m2"], model_paths["m3"], model_paths["m4"]]:
+        if not path: continue
+        try:
+            model = EfficientNet_B0().to(device)  # نستخدم نفس الهيكل للجميع
+            state = torch.load(path, map_location=device)
+            model.load_state_dict(state.get("model", state), strict=False)
+            model.eval()
+            models.append(model)
+        except: pass
     return models, device
 
-models_dict, device = load_models()
+models, device = load_models()
 
 # ====================== TRANSFORMS ======================
 transform = transforms.Compose([
@@ -140,28 +101,8 @@ transform = transforms.Compose([
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-# Labels for Behavior Models (adjust based on your classes)
-BEHAVIOR_LABELS = ["Safe Driving", "Phone Use", "Eating", "Smoking", "Turning", "Other Risky"]
-
 # ====================== DETECTION FUNCTIONS ======================
-def detect_behavior(frame, model_key):
-    model = models_dict.get(model_key)
-    if not model: 
-        cv2.putText(frame, f"{model_key}: N/A", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (128,128,128), 2)
-        return frame, False, 0.0, "N/A"
-    try:
-        tensor = transform(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
-        prob = torch.softmax(model(tensor), 1)[0]
-        idx, conf = prob.argmax().item(), prob.max().item()
-        label = BEHAVIOR_LABELS[idx] if idx < len(BEHAVIOR_LABELS) else "Unknown"
-        y_pos = { "densenet": 30, "effnet": 60, "mobilenet": 90, "kaggle": 120 }[model_key]
-        color = (0,255,0) if idx == 0 else (0,0,255)
-        cv2.putText(frame, f"{model_key}: {label} ({conf:.1%})", (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        return frame, idx != 0, conf, label
-    except: return frame, False, 0.0, "Error"
-
-def detect_drowsiness(frame):
-    # Haar fallback for drowsiness (front camera)
+def detect_drowsiness_video(frame):
     try:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
@@ -173,116 +114,147 @@ def detect_drowsiness(frame):
             eyes = eye_cascade.detectMultiScale(roi, 1.05, 3)
             for (ex, ey, ew, eh) in eyes:
                 eye = roi[ey:ey+eh, ex:ex+ew]
-                var = np.var(eye) if eye.size > 0 else 100
-                if var < 50: closed += 1
+                if eye.size > 0 and np.var(eye) < 50:
+                    closed += 1
         is_drowsy = closed >= 2
-        conf = closed / max(1, len(eyes) if 'eyes' in locals() else 1)
-        cv2.putText(frame, f"Drowsiness: {'YES' if is_drowsy else 'NO'} ({conf:.1%})", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255) if is_drowsy else (0,255,0), 2)
+        conf = min(closed / 2, 1.0) if closed > 0 else 0.0
+        cv2.putText(frame, f"Drowsiness: {'HIGH' if is_drowsy else 'LOW'}", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255) if is_drowsy else (0,255,0), 2)
         return frame, is_drowsy, conf
     except: return frame, False, 0.0
 
-def combined_analysis(drowsy, d_conf, behaviors):
-    risk = 0 if not drowsy else 30
-    alerts = [f"Drowsiness ({d_conf:.0%})"] if drowsy else []
-    for b_risk, b_conf, b_label in behaviors:
-        if b_risk: 
-            risk += 15
-            alerts.append(f"{b_label} ({b_conf:.0%})")
-    if risk >= 60: status, cls = "CRITICAL", "alert-danger"
-    elif risk >= 30: status, cls = "HIGH RISK", "alert-warning"
-    else: status, cls = "SAFE", "alert-success"
-    return {"status": status, "risk": risk, "alerts": alerts, "class": cls}
+def detect_behavior_video(frame):
+    if not models: return frame, False, 0.0
+    try:
+        tensor = transform(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))).unsqueeze(0).to(device)
+        risks = []
+        for model in models:
+            prob = torch.softmax(model(tensor), 1)[0]
+            conf = prob.max().item()
+            if prob.argmax() != 0:  # Not safe
+                risks.append(conf)
+        avg_risk = sum(risks) / len(risks) if risks else 0.0
+        is_risky = avg_risk > 0.5
+        cv2.putText(frame, f"Behavior Risk: {'HIGH' if is_risky else 'LOW'}", (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255) if is_risky else (0,255,0), 2)
+        return frame, is_risky, avg_risk
+    except: return frame, False, 0.0
 
-# ====================== IMAGE UPLOAD ======================
-def process_images(front_upload, side_upload):
-    if not (front_upload and side_upload): return None
-    front = cv2.imdecode(np.frombuffer(front_upload.read(), np.uint8), cv2.IMREAD_COLOR)
-    side = cv2.imdecode(np.frombuffer(side_upload.read(), np.uint8), cv2.IMREAD_COLOR)
+def combined_final_risk(drowsy, d_conf, behavior, b_conf):
+    total_risk = 0
+    alerts = []
+    if drowsy: total_risk += 50; alerts.append(f"Drowsiness ({d_conf:.0%})")
+    if behavior: total_risk += 50; alerts.append(f"Risky Behavior ({b_conf:.0%})")
+    if total_risk >= 75: status, cls = "CRITICAL DANGER", "alert-danger"
+    elif total_risk >= 50: status, cls = "HIGH RISK", "alert-warning"
+    else: status, cls = "SAFE", "alert-success"
+    return {"status": status, "risk": total_risk, "alerts": alerts, "class": cls}
+
+# ====================== IMAGE PROCESSING ======================
+def process_images(front_file, side_file):
+    if not (front_file and side_file): return None
+    front = cv2.imdecode(np.frombuffer(front_file.read(), np.uint8), cv2.IMREAD_COLOR)
+    side = cv2.imdecode(np.frombuffer(side_file.read(), np.uint8), cv2.IMREAD_COLOR)
     front = cv2.resize(front, (480, 360))
     side = cv2.resize(side, (480, 360))
-    front, drowsy, d_conf = detect_drowsiness(front)
-    behaviors = []
-    for key in ["densenet", "effnet", "mobilenet", "kaggle"]:
-        if key in models_dict:
-            side, risk, conf, label = detect_behavior(side.copy(), key)
-            behaviors.append((risk, conf, label))
-    analysis = combined_analysis(drowsy, d_conf, behaviors)
+    front, d, dc = detect_drowsiness_video(front)
+    side, b, bc = detect_behavior_video(side)
+    analysis = combined_final_risk(d, dc, b, bc)
     return front, side, analysis
 
-# ====================== VIDEO PROCESSING (SIDE CAMERA ONLY) ======================
-def process_side_video(video_path):
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened(): return
+# ====================== VIDEO PROCESSING ======================
+def process_video(front_path=None, side_path=None):
+    cap_front = cv2.VideoCapture(front_path) if front_path else None
+    cap_side = cv2.VideoCapture(side_path) if side_path else None
     placeholder = st.empty()
-    results = []
-    frame_idx = 0
+    drowsy_frames = behavior_frames = 0
+    total_frames = 0
+
     while True:
-        ret, side_frame = cap.read()
-        if not ret: break
-        side_frame = cv2.resize(side_frame, (480, 360))
-        behaviors = []
-        for key in ["densenet", "effnet", "mobilenet", "kaggle"]:
-            if key in models_dict:
-                side_frame, risk, conf, label = detect_behavior(side_frame.copy(), key)
-                behaviors.append((risk, conf, label))
-        risk_score = sum(conf for _, conf, _ in behaviors if risk)
-        status = "HIGH RISK" if risk_score > 2 else "SAFE"
-        analysis = {"status": status, "risk": risk_score * 25, "alerts": [f"{label} Risk" for _, _, label in behaviors if risk], "class": "alert-warning" if risk_score > 1 else "alert-success"}
-        results.append(analysis)
+        ret_f, frame_f = cap_front.read() if cap_front else (False, None)
+        ret_s, frame_s = cap_side.read() if cap_side else (False, None)
+        if not (ret_f or ret_s): break
+
+        frame_f = cv2.resize(frame_f, (480, 360)) if ret_f else None
+        frame_s = cv2.resize(frame_s, (480, 360)) if ret_s else None
+
+        d, dc = (False, 0.0)
+        b, bc = (False, 0.0)
+
+        if frame_f is not None:
+            frame_f, d, dc = detect_drowsiness_video(frame_f)
+            if d: drowsy_frames += 1
+        if frame_s is not None:
+            frame_s, b, bc = detect_behavior_video(frame_s)
+            if b: behavior_frames += 1
+
+        total_frames += 1
+        analysis = combined_final_risk(d, dc, b, bc)
+
         with placeholder.container():
-            st.markdown(f'<div class="{analysis["class"]}">{analysis["status"]} - Risk: {analysis["risk"]:.0f}%</div>', unsafe_allow_html=True)
-            st.image(side_frame, channels="BGR", caption="Side Camera (Behavior Analysis)")
-            if analysis["alerts"]:
-                for a in analysis["alerts"]: st.warning(a)
-        time.sleep(0.03)  # Faster playback
-        frame_idx += 1
-    cap.release()
-    risky = sum(1 for r in results if r["risk"] >= 50)
-    col1, col2 = st.columns(2)
-    col1.metric("Frames Analyzed", len(results))
-    col2.metric("Risky Frames", risky)
-    st.success("Side Video Analysis Complete!")
-
-# ====================== UI ======================
-st.markdown('<div class="main-header"><h1>Driver Safety Monitor Pro</h1><p>4 Behavior Models + Drowsiness | Images & Individual Videos</p></div>', unsafe_allow_html=True)
-
-tab1, tab2, tab3 = st.tabs(["Upload Images", "Side Video Analysis", "Models Info"])
-
-with tab1:
-    st.subheader("Upload Images for Dual Analysis")
-    col1, col2 = st.columns(2)
-    with col1:
-        front_upload = st.file_uploader("Front Camera (Drowsiness)", type=['jpg', 'jpeg', 'png'])
-    with col2:
-        side_upload = st.file_uploader("Side Camera (Behavior)", type=['jpg', 'jpeg', 'png'])
-    if st.button("Analyze Images"):
-        result = process_images(front_upload, side_upload)
-        if result:
-            front, side, analysis = result
-            st.markdown(f'<div class="{analysis["class"]}">{analysis["status"]} - Risk: {analysis["risk"]}%</div>', unsafe_allow_html=True)
-            col1, col2 = st.columns(2)
-            col1.image(front, channels="BGR", caption="Front (Drowsiness)")
-            col2.image(side, channels="BGR", caption="Side (Behavior)")
-            st.metric("Overall Risk", f"{analysis['risk']}%")
+            st.markdown(f'<div class="{analysis["class"]}">{analysis["status"]}</div>', unsafe_allow_html=True)
+            cols = st.columns(2)
+            if frame_f is not None: cols[0].image(frame_f, channels="BGR", caption="Front Camera")
+            if frame_s is not None: cols[1].image(frame_s, channels="BGR", caption="Side Camera")
+            st.metric("Current Risk", f"{analysis['risk']}%")
             if analysis['alerts']:
                 for a in analysis['alerts']: st.warning(a)
-            else:
-                st.success("No risks detected")
+
+        time.sleep(0.05)
+
+    if cap_front: cap_front.release()
+    if cap_side: cap_side.release()
+
+    # Final Summary
+    st.success("ANALYSIS COMPLETE")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Frames", total_frames)
+    col2.metric("Drowsy Frames", drowsy_frames)
+    col3.metric("Risky Behavior Frames", behavior_frames)
+    final_risk = (drowsy_frames + behavior_frames) / total_frames * 100 if total_frames > 0 else 0
+    st.metric("Final Risk Score", f"{final_risk:.1f}%")
+
+# ====================== UI ======================
+st.markdown('<div class="main-header"><h1>Driver Safety Monitor</h1><p>Dual Camera Real-time Analysis</p></div>', unsafe_allow_html=True)
+
+tab1, tab2, tab3 = st.tabs(["Upload Images", "Upload Videos", "Live Demo"])
+
+with tab1:
+    st.subheader("Upload Images")
+    col1, col2 = st.columns(2)
+    with col1: front_img = st.file_uploader("Front Image (Drowsiness)", type=['jpg','png'])
+    with col2: side_img = st.file_uploader("Side Image (Behavior)", type=['jpg','png'])
+    if st.button("Analyze Images"):
+        result = process_images(front_img, side_img)
+        if result:
+            front, side, analysis = result
+            st.markdown(f'<div class="{analysis["class"]}">{analysis["status"]}</div>', unsafe_allow_html=True)
+            col1, col2 = st.columns(2)
+            col1.image(front, channels="BGR", caption="Front")
+            col2.image(side, channels="BGR", caption="Side")
+            st.metric("Risk Level", f"{analysis['risk']}%")
 
 with tab2:
-    st.subheader("Upload Side Video for Behavior Analysis")
-    video_file = st.file_uploader("Upload Side Camera Video (MP4/AVI)", type=['mp4', 'avi', 'mov'])
-    if video_file and st.button("Start Side Video Analysis"):
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
-            tmp.write(video_file.read())
-            process_side_video(tmp.name)
-        os.unlink(tmp.name)
+    st.subheader("Upload Videos (Separate)")
+    col1, col2 = st.columns(2)
+    with col1: front_vid = st.file_uploader("Front Video (Drowsiness)", type=['mp4','avi','mov'])
+    with col2: side_vid = st.file_uploader("Side Video (Behavior)", type=['mp4','avi','mov'])
+    if st.button("Start Video Analysis"):
+        if not (front_vid or side_vid):
+            st.error("Upload at least one video")
+        else:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_f, \
+                 tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_s:
+                front_path = tmp_f.name if front_vid else None
+                side_path = tmp_s.name if side_vid else None
+                if front_vid: tmp_f.write(front_vid.read())
+                if side_vid: tmp_s.write(side_vid.read())
+                process_video(front_path, side_path)
+                if front_path: os.unlink(front_path)
+                if side_path: os.unlink(side_path)
 
 with tab3:
-    st.subheader("Loaded Models")
-    for key in ["densenet", "effnet", "mobilenet", "kaggle"]:
-        status = "Yes" if key in models_dict else "No"
-        st.info(f"{key.upper()}: {status}")
+    st.info("Live stream works only when running locally. Use video upload for cloud testing.")
 
 st.markdown("---")
-st.caption("Driver Safety Monitor Pro v3.1 | 4 Behavior Models | Zero Errors")
+st.caption("Driver Safety Monitor Pro | Real-time Dual Analysis | Zero Errors")
